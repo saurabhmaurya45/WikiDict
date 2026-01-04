@@ -1,0 +1,29 @@
+# =============================================================================
+# WikiDict Code Owners
+# =============================================================================
+# These owners will be automatically requested for review when someone
+# opens a pull request that modifies code in specific areas.
+#
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo
+# This will be requested for review on all PRs unless a later match takes precedence
+* @saurabhmaurya45
+
+# Infrastructure & Deployment
+/deployment/** @saurabhmaurya45
+/.github/workflows/** @saurabhmaurya45
+/k8s/** @saurabhmaurya45
+/Dockerfile @saurabhmaurya45
+
+# Critical Configuration Files
+/requirements.txt @saurabhmaurya45
+/pyproject.toml @saurabhmaurya45
+/.gitignore @saurabhmaurya45
+
+# Core Application Code
+/src/** @saurabhmaurya45
+/main.py @saurabhmaurya45
+
+# Documentation (can be relaxed for contributors)
+# *.md @saurabhmaurya45
