@@ -181,7 +181,7 @@ jobs:
           mypy src/ || true
 
   build-container-image:
-    name: Build Container image
+    name: Build Container - WikiDict
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [version]
