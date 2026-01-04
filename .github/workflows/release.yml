@@ -17,6 +17,10 @@ on:
         type: string
         default: Manual
 
+permissions:
+  contents: write  # Required to create releases and tags
+  packages: write  # Required to push Docker images
+
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -183,7 +187,7 @@ jobs:
           mypy src/ || true
 
   build-container-image:
-    name: Build Container Image
+    name: Build Container - WikiDict
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [version, bandit-scan, ruff-lint, safety-scan, code-lint]

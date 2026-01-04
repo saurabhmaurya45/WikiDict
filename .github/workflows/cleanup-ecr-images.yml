@@ -1,0 +1,109 @@
+# =============================================================================
+# GitHub Workflow: Cleanup Old ECR Public Images
+# =============================================================================
+
+name: Cleanup Old ECR Images
+
+on:
+  schedule:
+    - cron: '0 2 */15 * *'  # Every 15 days at 2 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete Old Docker Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Cleanup old images
+        run: |
+          REPOSITORY_NAME="wikidict-service"
+          KEEP_LAST_N=10  # Always keep last 10 images
+          DAYS_TO_KEEP=15 # Delete images older than 15 days
+
+          echo "🧹 Cleaning up old images from $REPOSITORY_NAME"
+          echo "Policy: Keep last $KEEP_LAST_N images OR images newer than $DAYS_TO_KEEP days"
+          echo ""
+
+          # Get all image details sorted by push date
+          IMAGE_DETAILS=$(aws ecr-public describe-images \
+            --repository-name "$REPOSITORY_NAME" \
+            --region us-east-1 \
+            --output json)
+
+          # Count total images
+          TOTAL_IMAGES=$(echo "$IMAGE_DETAILS" | jq '.imageDetails | length')
+          echo "📊 Found $TOTAL_IMAGES total images"
+          echo ""
+
+          # Calculate cutoff timestamp (30 days ago in seconds since epoch)
+          CUTOFF_TIMESTAMP=$(date -u -d "$DAYS_TO_KEEP days ago" +%s)
+
+          DELETED_COUNT=0
+          KEPT_COUNT=0
+
+          # Process each image
+          echo "$IMAGE_DETAILS" | jq -r '.imageDetails | sort_by(.imagePushedAt) | reverse | .[] | @base64' | while read -r encoded_image; do
+            # Decode image details
+            IMAGE=$(echo "$encoded_image" | base64 --decode)
+
+            TAG=$(echo "$IMAGE" | jq -r '.imageTags[0] // "untagged"')
+            PUSH_DATE=$(echo "$IMAGE" | jq -r '.imagePushedAt')
+            IMAGE_DIGEST=$(echo "$IMAGE" | jq -r '.imageDigest')
+
+            # Skip untagged images
+            if [ "$TAG" = "untagged" ]; then
+              continue
+            fi
+
+            # Convert push date to timestamp
+            PUSH_TIMESTAMP=$(date -u -d "$PUSH_DATE" +%s)
+
+            # Calculate image age in days
+            AGE_DAYS=$(( ($(date +%s) - PUSH_TIMESTAMP) / 86400 ))
+
+            # Keep if in last N images (sorted by date, newest first)
+            if [ $KEPT_COUNT -lt $KEEP_LAST_N ]; then
+              echo "✅ Keeping (recent $((KEPT_COUNT + 1))/$KEEP_LAST_N): $TAG (age: $AGE_DAYS days)"
+              ((KEPT_COUNT++))
+              continue
+            fi
+
+            # Delete if older than cutoff
+            if [ $PUSH_TIMESTAMP -lt $CUTOFF_TIMESTAMP ]; then
+              echo "🗑️  Deleting (age: $AGE_DAYS days): $TAG"
+
+              aws ecr-public batch-delete-image \
+                --repository-name "$REPOSITORY_NAME" \
+                --region us-east-1 \
+                --image-ids imageTag="$TAG" \
+                --output json > /dev/null
+
+              if [ $? -eq 0 ]; then
+                ((DELETED_COUNT++))
+              else
+                echo "❌ Failed to delete $TAG"
+              fi
+            else
+              echo "✅ Keeping (recent): $TAG (age: $AGE_DAYS days)"
+              ((KEPT_COUNT++))
+            fi
+          done
+
+          echo ""
+          echo "📊 Cleanup Summary:"
+          echo "  Total images scanned: $TOTAL_IMAGES"
+          echo "  Images kept: $KEPT_COUNT"
+          echo "  Images deleted: $DELETED_COUNT"
+          echo "  Estimated storage freed: ~$((DELETED_COUNT * 150)) MB"
