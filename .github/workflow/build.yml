@@ -1,0 +1,194 @@
+# =============================================================================
+# GitHub Workflow: Branch Build
+# =============================================================================
+
+name: Branch Build
+run-name: "PR #${{ github.event.number }} - Branch: ${{ github.head_ref }} - Build"
+
+# prevent multiple build from same pull request
+concurrency:
+  group: branch-build-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true 
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      runid: ${{ steps.version.outputs.runid }}
+    
+    steps:
+      - name: Sparse checkout for version file
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            version.txt
+          sparse-checkout-cone-mode: false
+      - name: Generate Semantic Version and Run ID
+        id: version
+        run: |
+          # Generate semantic version: base_version.timestamp
+          VERSION=$(cat version.txt | xargs).$(date +%s)
+
+          # Generate unique run ID for tracking
+          RUN_ID=SM$(date +%Y%m%d%H%M%S)
+
+          echo "Generated version: $VERSION"
+          echo "Generated run ID: $RUN_ID"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "runid=${RUN_ID}" >> "$GITHUB_OUTPUT"
+  
+  bandit-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+  
+      - name: "Setup python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: "Install Dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml]
+
+      - name: "Run Bandit SAST Security Scan"
+        run: |
+          bandit -r . \
+          -f json \
+          -o bandit-report.json \
+          --exclude __pycache__,.venv,venv,tests \
+          || true
+
+      - name: "Upload Bandit Report"
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 2
+
+  ruff-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+  
+      - name: "Setup python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: "Install Dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: "Run Ruff Linter"
+        run: |
+          ruff check . \
+          --exclude __pycache__,.venv,venv,tests \
+          --format json \
+          --output ruff-report.json \
+          || true
+
+  safety-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+  
+      - name: "Setup python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: "Install Dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety
+
+      - name: "Run Safety Vulnerability Scan"
+        run: |
+          safety check \
+            --file requirements.txt \
+            --json \
+            --output safety-report.json || true
+
+      - name: "Upload Safety Report"
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety-report
+          path: safety-report.json
+          retention-days: 2
+
+  code-lint:
+    name: Code Linting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Complete Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pylint black flake8 mypy
+
+      - name: Execute Code Quality Checks
+        run: |
+          # Run Black formatter check
+          black --check . || true
+
+          # Run Flake8 linting
+          flake8 scripts/ --max-line-length=120 || true
+          flake8 src/ --max-line-length=120 || true
+
+          # Run type checking with mypy
+          mypy scripts/  || true
+          mypy src/  || true
+
+  build-container-image:
+    name: Build Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [version]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      WIKIDICT_SERVICE_ECR_REPO: ${{ vars.WIKIDICT_SERVICE_ECR_REPO }}
+    steps:
+      - name: Checkout Complete Repository
+        uses: actions/checkout@v4
+
+      - name: Build Container image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            -t ${{ env.WIKIDICT_SERVICE_ECR_REPO }}:${{ env.VERSION }} \
+            -f Dockerfile . \
+            --provenance=false
+

@@ -1,0 +1,279 @@
+name: "CI Build for sm-wikidict"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Select the environment to build'
+        required: true
+        default: 'autoqa'
+        type: choice
+        options:
+          - production
+          - autoqa
+          - all
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight UTC
+
+jobs:
+  setup:
+    name: "Setup Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-environment.outputs.environment }}
+    steps:
+      - name: "Determine environment to build"
+        id: set-environment
+        run: |
+          ENV_INPUT="${{ github.event.inputs.environment }}"
+          if [ -z "$ENV_INPUT" ]; then
+            if [ "${{ github.event_name }}" == "schedule" ]; then
+              echo "Scheduler build detected. Building for all environments."
+              ENV_INPUT="all"
+            fi
+          fi
+
+          if [ "$ENV_INPUT" == "all" ]; then
+            echo "Building for all environments."
+            echo "environment=['production','autoqa']" >> $GITHUB_OUTPUT
+          else
+            echo "Building for environment: $ENV_INPUT"
+            echo "environment=['$ENV_INPUT']" >> $GITHUB_OUTPUT
+          fi
+          echo "✅ Will build for: $ENV_INPUT"
+
+  build-wikidict:
+    name: "Build sm-wikidict for - ${{ matrix.environment }}"
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # 3 hours
+
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.setup.outputs.environment) }}
+      fail-fast: false # Continue other builds even if one fails
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "Setup python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: "Install Dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: "Resolve environment config"
+        id: config
+        run: |
+          ENV=${{ matrix.environment }}
+          echo "Resolving config for environment: $ENV"
+
+          # Map environment to bucket name and credentials from GitHub Variables/Secrets
+          case "$ENV" in
+            production)
+              BUCKET_NAME="${{ vars.PRODUCTION_BUCKET_NAME }}"
+              ACCESS_KEY="${{ secrets.PROD_ACCESS_KEY }}"
+              SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}"
+              REGION="${{ vars.AWS_REGION }}"
+              ;;
+            autoqa)
+              BUCKET_NAME="${{ vars.AUTOQA_BUCKET_NAME }}"
+              ACCESS_KEY="${{ secrets.AUTOQA_ACCESS_KEY }}"
+              SECRET_KEY="${{ secrets.AUTOQA_SECRET_KEY }}"
+              REGION="${{ vars.AWS_REGION }}"
+              ;;
+            *)
+              echo "❌ Unknown environment: $ENV"
+              exit 1
+              ;;
+          esac
+
+          # Validate configuration
+          if [ -z "$BUCKET_NAME" ]; then
+            echo "❌ Error: Bucket name not configured for $ENV"
+            echo "💡 Add GitHub Variable: ${ENV^^}_BUCKET_NAME"
+            exit 1
+          fi
+
+          if [ -z "$ACCESS_KEY" ] || [ -z "$SECRET_KEY" ]; then
+            echo "❌ Error: Credentials not configured for $ENV"
+            echo "💡 Add GitHub Secrets: ${ENV^^}_ACCESS_KEY, ${ENV^^}_SECRET_KEY"
+            exit 1
+          fi
+
+          if [ -z "$REGION" ]; then
+            echo "❌ Error: AWS region not configured"
+            echo "💡 Add GitHub Variable: AWS_REGION"
+            exit 1
+          fi
+
+          # Export to GitHub outputs
+          echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
+          echo "access_key=$ACCESS_KEY" >> $GITHUB_OUTPUT
+          echo "secret_key=$SECRET_KEY" >> $GITHUB_OUTPUT
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+
+          echo "✅ Configuration resolved for $ENV"
+          echo "   Bucket: $BUCKET_NAME"
+          echo "   Region: $REGION"
+
+      - name: "Build and Upload sm-wikidict"
+        id: build-upload
+        env:
+          # Python script expects these exact variable names
+          AWS_BUCKET_NAME: ${{ steps.config.outputs.bucket_name }}
+          AWS_ACCESS_KEY_ID: ${{ steps.config.outputs.access_key }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.config.outputs.secret_key }}
+          AWS_DEFAULT_REGION: ${{ steps.config.outputs.region }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          echo "=========================================="
+          echo "WikiDict Build - ${{ matrix.environment }}"
+          echo "=========================================="
+          echo "Environment: ${{ matrix.environment }}"
+          echo "Bucket: $AWS_BUCKET_NAME"
+          echo "Region: $AWS_DEFAULT_REGION"
+          echo ""
+
+          # Build the dictionary (script reads environment from ENVIRONMENT variable)
+          python scripts/build_wikidict.py
+
+          BUILD_STATUS=$?
+
+          if [ $BUILD_STATUS -eq 0 ]; then
+            echo "✅ WikiDict build completed successfully"
+            echo "build_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ WikiDict build failed"
+            echo "build_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: "Post Build Status"
+        if: always()
+        run: |
+          ENV=${{ matrix.environment }}
+          STATUS=${{ steps.build-upload.outputs.build_status }}
+
+          echo "=========================================="
+          echo "Build Status Summary"
+          echo "=========================================="
+          echo "Environment: $ENV"
+
+          if [ "$STATUS" == "success" ]; then
+            echo "Status: ✅ SUCCESS"
+          else
+            echo "Status: ❌ FAILED"
+          fi
+          echo "=========================================="
+
+  summary:
+    name: "Build Summary"
+    needs: [setup, build-wikidict]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: "Display Build Summary"
+        run: |
+          echo "## 📋 Build Summary for sm-wikidict" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environments**: ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall Status**: ${{ needs.build-wikidict.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.build-wikidict.result }}" == "success" ]; then
+            echo "✅ **All builds completed successfully**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### What was built:" >> $GITHUB_STEP_SUMMARY
+            echo "- Processed Wikipedia dictionary data" >> $GITHUB_STEP_SUMMARY
+            echo "- Created optimized search index" >> $GITHUB_STEP_SUMMARY
+            echo "- Uploaded artifacts to S3" >> $GITHUB_STEP_SUMMARY
+            echo "- Updated manifest.json" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Some builds failed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check individual job logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "Automated release will be triggered if all builds succeeded." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Manual trigger - no automated release deployment." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  trigger-release:
+    name: "Trigger release deployment"
+    needs: [setup, build-wikidict, summary]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && needs.build-wikidict.result == 'success'
+
+    steps:
+      - name: "Trigger Release Workflow Dispatch"
+        uses: actions/github-script@v7
+        continue-on-error: true
+        id: trigger
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            console.log('🚀 Triggering release workflow...');
+
+            try {
+              const response = await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'release.yml',
+                ref: 'main',
+                inputs: {
+                  triggered_by: 'ci-build-wikidict'
+                }
+              });
+
+              console.log('✅ Release workflow triggered successfully');
+              console.log('Response status:', response.status);
+              return { success: true, status: response.status };
+            } catch (error) {
+              console.error('❌ Failed to trigger release workflow');
+              console.error('Error:', error.message);
+              throw error;
+            }
+
+      - name: "Post Trigger Status"
+        if: always()
+        run: |
+          if [ "${{ steps.trigger.outcome }}" == "success" ]; then
+            echo "## 🚀 Release Triggered" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Release deployment workflow dispatched successfully." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**What happens next:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Docker images will be rebuilt" >> $GITHUB_STEP_SUMMARY
+            echo "- Pods will be redeployed to all environments" >> $GITHUB_STEP_SUMMARY
+            echo "- Updated wikidict artifacts will be loaded" >> $GITHUB_STEP_SUMMARY
+            echo "- Services will start with latest dictionary data" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Triggered by**: Scheduled WikiDict build" >> $GITHUB_STEP_SUMMARY
+            echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Release Trigger Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Failed to trigger release workflow." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Possible reasons:**" >> $GITHUB_STEP_SUMMARY
+            echo "- release.yml workflow file not found" >> $GITHUB_STEP_SUMMARY
+            echo "- Insufficient permissions" >> $GITHUB_STEP_SUMMARY
+            echo "- GitHub API rate limit" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Action required**: Check workflow logs and trigger release manually if needed." >> $GITHUB_STEP_SUMMARY
+            echo "**Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          fi
