@@ -31,8 +31,10 @@ The service uses a read-optimized architecture:
 ```
 sm-wikidict/
 ├── main.py                    # FastAPI application entry point
-├── requirement.txt            # Python dependencies
+├── requirements.txt           # Python dependencies
+├── requirements-dev.txt       # Development dependencies
 ├── Dockerfile                 # Container image definition
+├── version.txt                # Application version
 │
 ├── src/
 │   ├── controller/            # API endpoints
@@ -42,6 +44,33 @@ sm-wikidict/
 │   ├── middleware/            # Request/response middleware
 │   ├── config/                # Configuration
 │   └── utils/                 # Utility functions
+│
+├── .github/
+│   └── workflows/             # GitHub Actions CI/CD
+│       ├── build.yml          # PR build & quality checks
+│       ├── release.yml        # Production release pipeline
+│       └── ci-build-wikidict.yml  # WikiDict artifact builder
+│
+├── k8s/                       # Kubernetes manifests
+│   ├── namespace.yaml         # Environment namespaces
+│   ├── deployment.yaml        # Application deployment
+│   └── service.yaml           # LoadBalancer service
+│
+├── scripts/                   # Build & utility scripts
+│   ├── build_wikidict.py      # Incremental WikiDict build
+│   ├── build_wikidict_full.py # Full WikiDict rebuild
+│   └── generate_fake_dataset.py  # Test data generator
+│
+├── experiments/               # Learning experiments & guides
+│   ├── README.md              # Experiments index
+│   └── 01-local-k8s-deployment/  # Phase 1: Local K8s
+│       ├── README.md          # Complete guide
+│       ├── commands.sh        # Command reference
+│       └── troubleshooting.md # Debug guide
+│
+├── docs/                      # Documentation
+│   ├── architecture_review_board_arb_read_optimized_dictionary_system.md
+│   └── infrastructure-costing-decisions.md
 │
 └── deployment/
     └── terraform/             # Infrastructure as Code
@@ -59,7 +88,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install -r requirement.txt
+pip install -r requirements.txt
 
 # Run the server
 python main.py
@@ -89,6 +118,44 @@ curl http://localhost:8000/ready
 open http://localhost:8000/docs
 ```
 
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+
+The project uses three automated workflows:
+
+**1. Branch Build (`build.yml`)** - Runs on pull requests
+- Semantic versioning with timestamps
+- Security scans: Bandit (SAST), Safety (dependencies), Ruff (linting)
+- Code quality: Black, Flake8, Mypy
+- Container image build validation
+- Artifact retention (2 days)
+
+**2. Release Build (`release.yml`)** - Runs on push to main
+- Triggers automatically or manually via workflow_dispatch
+- Runs all quality gates in parallel
+- Builds and pushes Docker image to AWS ECR
+- Creates GitHub release with version tracking
+- Full audit trail (version, run_id, triggered_by)
+
+**3. WikiDict Builder (`ci-build-wikidict.yml`)** - Scheduled daily
+- Multi-environment support (production/autoqa)
+- Incremental updates with changelog processing
+- S3 artifact upload with manifest tracking
+- Automatically triggers release workflow on success
+
+### Required GitHub Secrets & Variables
+
+**Secrets:**
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (ECR authentication)
+- `PROD_ACCESS_KEY`, `PROD_SECRET_KEY` (Production S3)
+- `AUTOQA_ACCESS_KEY`, `AUTOQA_SECRET_KEY` (AutoQA S3)
+
+**Variables:**
+- `AWS_REGION` (e.g., us-east-1)
+- `WIKIDICT_SERVICE_ECR_REPO` (ECR repository URL)
+- `PRODUCTION_BUCKET_NAME`, `AUTOQA_BUCKET_NAME` (S3 buckets)
+
 ## Infrastructure
 
 See [deployment/terraform/README.md](deployment/terraform/README.md) for:
@@ -98,8 +165,14 @@ See [deployment/terraform/README.md](deployment/terraform/README.md) for:
 
 ## Documentation
 
+### Infrastructure & Architecture
 - [Terraform Infrastructure Guide](deployment/terraform/README.md)
 - [Architecture Review Board (ARB)](docs/architecture_review_board_arb_read_optimized_dictionary_system.md)
+- [Infrastructure Costing & Decisions](docs/infrastructure-costing-decisions.md)
+
+### Learning Experiments
+- [Experiments Index](experiments/README.md) - Complete learning path
+- [Experiment 01: Local Kubernetes Deployment](experiments/01-local-k8s-deployment/README.md) ✅
 
 ## License
 
