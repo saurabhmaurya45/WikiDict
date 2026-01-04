@@ -46,10 +46,13 @@ sm-wikidict/
 │   └── utils/                 # Utility functions
 │
 ├── .github/
-│   └── workflows/             # GitHub Actions CI/CD
-│       ├── build.yml          # PR build & quality checks
-│       ├── release.yml        # Production release pipeline
-│       └── ci-build-wikidict.yml  # WikiDict artifact builder
+│   ├── workflows/             # GitHub Actions CI/CD
+│   │   ├── build.yml          # PR build & quality checks
+│   │   ├── release.yml        # Production release pipeline
+│   │   ├── ci-build-wikidict.yml  # WikiDict artifact builder
+│   │   └── cleanup-ecr-images.yml # ECR image cleanup
+│   ├── CODEOWNERS             # Code ownership rules
+│   └── pull_request_template.md # PR template
 │
 ├── k8s/                       # Kubernetes manifests
 │   ├── namespace.yaml         # Environment namespaces
@@ -122,7 +125,7 @@ open http://localhost:8000/docs
 
 ### GitHub Actions Workflows
 
-The project uses three automated workflows:
+The project uses four automated workflows:
 
 **1. Branch Build (`build.yml`)** - Runs on pull requests
 - Semantic versioning with timestamps
@@ -134,15 +137,21 @@ The project uses three automated workflows:
 **2. Release Build (`release.yml`)** - Runs on push to main
 - Triggers automatically or manually via workflow_dispatch
 - Runs all quality gates in parallel
-- Builds and pushes Docker image to AWS ECR
+- Builds and pushes Docker image to AWS ECR Public
 - Creates GitHub release with version tracking
-- Full audit trail (version, run_id, triggered_by)
+- Full audit trail (version, triggered_by)
 
 **3. WikiDict Builder (`ci-build-wikidict.yml`)** - Scheduled daily
 - Multi-environment support (production/autoqa)
 - Incremental updates with changelog processing
 - S3 artifact upload with manifest tracking
 - Automatically triggers release workflow on success
+
+**4. ECR Image Cleanup (`cleanup-ecr-images.yml`)** - Scheduled every 15 days
+- Automated cleanup of old Docker images from ECR Public
+- Retention policy: Keep last 10 images OR images newer than 15 days
+- Manual trigger available via workflow_dispatch
+- Prevents storage bloat and manages costs
 
 ### Required GitHub Secrets & Variables
 
@@ -152,9 +161,35 @@ The project uses three automated workflows:
 - `AUTOQA_ACCESS_KEY`, `AUTOQA_SECRET_KEY` (AutoQA S3)
 
 **Variables:**
-- `AWS_REGION` (e.g., us-east-1)
-- `WIKIDICT_SERVICE_ECR_REPO` (ECR repository URL)
+- `AWS_REGION` (e.g., eu-north-1 for EKS/S3, us-east-1 for ECR Public)
+- `WIKIDICT_SERVICE_ECR_REPO` (ECR Public repository URL)
 - `PRODUCTION_BUCKET_NAME`, `AUTOQA_BUCKET_NAME` (S3 buckets)
+
+### Branch Protection & Code Review
+
+The repository uses GitHub branch protection rules to ensure code quality:
+
+**Protected Branch:** `main`
+
+**Requirements:**
+- Pull requests required for all changes
+- 1 approval from code owners required
+- Status check must pass: `Build Container - WikiDict`
+- Linear history enforced
+- Force pushes and deletions blocked
+
+**Code Ownership:**
+- All code changes require review from `@saurabhmaurya45`
+- Defined in `.github/CODEOWNERS`
+- Automatic reviewer assignment on PRs
+
+**Pull Request Process:**
+1. Create feature branch from `main`
+2. Make changes and commit
+3. Push branch and create PR using the PR template
+4. Wait for CI checks to pass (build, security scans, linting)
+5. Get approval from code owner
+6. Merge via GitHub UI (squash merge recommended)
 
 ## Infrastructure
 
