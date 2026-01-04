@@ -79,14 +79,14 @@ jobs:
           case "$ENV" in
             production)
               BUCKET_NAME="${{ vars.PRODUCTION_BUCKET_NAME }}"
-              ACCESS_KEY="${{ secrets.PROD_ACCESS_KEY }}"
-              SECRET_KEY="${{ secrets.PROD_SECRET_KEY }}"
+              ACCESS_KEY="${{ secrets.AWS_ACCESS_KEY_ID }}"
+              SECRET_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
               REGION="${{ vars.AWS_REGION }}"
               ;;
             autoqa)
               BUCKET_NAME="${{ vars.AUTOQA_BUCKET_NAME }}"
-              ACCESS_KEY="${{ secrets.AUTOQA_ACCESS_KEY }}"
-              SECRET_KEY="${{ secrets.AUTOQA_SECRET_KEY }}"
+              ACCESS_KEY="${{ secrets.AWS_ACCESS_KEY_ID }}"
+              SECRET_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}"
               REGION="${{ vars.AWS_REGION }}"
               ;;
             *)

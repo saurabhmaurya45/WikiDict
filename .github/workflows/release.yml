@@ -24,7 +24,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       runid: ${{ steps.version.outputs.runid }}
-    
+
     steps:
       - name: Sparse checkout for version file
         uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
 
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "runid=${RUN_ID}" >> "$GITHUB_OUTPUT"
-  
+
   bandit-scan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -54,7 +54,7 @@ jobs:
     steps:
       - name: "Checkout Repository"
         uses: actions/checkout@v4
-  
+
       - name: "Setup python"
         uses: actions/setup-python@v5
         with:
@@ -88,7 +88,7 @@ jobs:
     steps:
       - name: "Checkout Repository"
         uses: actions/checkout@v4
-  
+
       - name: "Setup python"
         uses: actions/setup-python@v5
         with:
@@ -122,7 +122,7 @@ jobs:
     steps:
       - name: "Checkout Repository"
         uses: actions/checkout@v4
-  
+
       - name: "Setup python"
         uses: actions/setup-python@v5
         with:
@@ -158,8 +158,8 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Install Dependencies
         run: |
@@ -200,11 +200,13 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: us-east-1  # Public ECR only in us-east-1
 
-      - name: "Login to Amazon ECR"
+      - name: "Login to Amazon ECR Public"
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
 
       - name: Build Container image
         run: |
@@ -213,15 +215,17 @@ jobs:
             -t ${{ env.WIKIDICT_SERVICE_ECR_REPO }}:${{ env.VERSION }} \
             -f Dockerfile . \
             --provenance=false
-            
-      - name: "Push Container Image to ECR"
+
+      - name: "Push Container Image to ECR Public"
         run: |
           docker push ${{ env.WIKIDICT_SERVICE_ECR_REPO }}:${{ env.VERSION }}
-      
-      - name: "Verify Container Image in ECR"
+          echo "✅ Image pushed successfully: ${{ env.WIKIDICT_SERVICE_ECR_REPO }}:${{ env.VERSION }}"
+
+      - name: "Verify Container Image in ECR Public"
         run: |
-          aws ecr describe-images \
-            --repository-name $(echo "${WIKIDICT_SERVICE_ECR_REPO}" | cut -d'/' -f2-) \
+          aws ecr-public describe-images \
+            --repository-name $(echo "${WIKIDICT_SERVICE_ECR_REPO}" | cut -d'/' -f3) \
+            --region us-east-1 \
             --image-ids imageTag=${{ env.VERSION }}
 
   release:
@@ -233,6 +237,10 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       RUN_ID: ${{ needs.version.outputs.runid }}
     steps:
+      - name: Get Build Timestamp
+        id: timestamp
+        run: echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
@@ -242,11 +250,7 @@ jobs:
             ## Release Details
             - **Version:** ${{ env.VERSION }}
             - **Run ID:** ${{ env.RUN_ID }}
-            - **Built on:** ${{ github.run_started_at }}
+            - **Built on:** ${{ steps.timestamp.outputs.build_time }}
             - **Triggered by:** ${{ github.event.inputs.triggered_by || 'Manual' }}
           draft: false
           prerelease: false
-
-
-
-  
