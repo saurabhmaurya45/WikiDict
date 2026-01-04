@@ -249,7 +249,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.VERSION }}
-          name: "Release ${{ env.VERSION }} - Run ID: ${{ env.RUN_ID }}"
+          name: "Release ${{ env.VERSION }} "
           body: |
             ## Release Details
             - **Version:** ${{ env.VERSION }}
