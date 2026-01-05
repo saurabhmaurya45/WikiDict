@@ -1,8 +1,8 @@
 # Development dependencies
-# Install with: pip install -r requirement-dev.txt
+# Install with: pip install -r requirements-dev.txt
 
 # Include production dependencies
--r requirement.txt
+-r requirements.txt
 
 # Development and testing tools
 faker>=28.0.0
