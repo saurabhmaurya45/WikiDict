@@ -12,8 +12,8 @@ on:
           - production
           - autoqa
           - all
-  schedule:
-    - cron: '0 0 * * *'  # Runs daily at midnight UTC
+  # schedule:
+  #   - cron: '0 0 * * *'  # Runs daily at midnight UTC
 
 jobs:
   setup:
